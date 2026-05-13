@@ -38,6 +38,11 @@ class Config:
     # - Anthropic: claude-3-5-sonnet-latest
     model_version: str = "gpt-5.3-codex"
     temperature: float = 1
+    # Optional: redirect Anthropic-compatible traffic to a different base URL
+    # (e.g. https://api.deepseek.com/anthropic). Empty = use default.
+    anthropic_base_url: str = ""
+    # Optional: override max output tokens (0 = use provider default).
+    max_tokens: int = 0
 
     # Embedding Configuration
     embedding_provider: str = "huggingface"  # [openai, huggingface, ollama]
@@ -80,6 +85,27 @@ class Config:
             print(f"<config>model_version={self.model_version} (env:{version_key})</config>")
         else:
             print(f"<config>model_version={self.model_version} (default)</config>")
+
+        # Anthropic-compatible base URL override
+        anthropic_url_key = "FOAMAGENT_ANTHROPIC_BASE_URL"
+        anthropic_url_env = _env_nonempty(anthropic_url_key)
+        if anthropic_url_env is not None:
+            self.anthropic_base_url = anthropic_url_env
+            print(f"<config>anthropic_base_url={self.anthropic_base_url} (env:{anthropic_url_key})</config>")
+        else:
+            print(f"<config>anthropic_base_url={self.anthropic_base_url} (default)</config>")
+
+        # Max tokens override
+        max_tok_key = "FOAMAGENT_MAX_TOKENS"
+        max_tok_env = _env_nonempty(max_tok_key)
+        if max_tok_env is not None:
+            try:
+                self.max_tokens = int(max_tok_env)
+                print(f"<config>max_tokens={self.max_tokens} (env:{max_tok_key})</config>")
+            except ValueError:
+                print(f"<config>max_tokens={self.max_tokens} (default; invalid env:{max_tok_key}={max_tok_env!r})</config>")
+        else:
+            print(f"<config>max_tokens={self.max_tokens} (default)</config>")
 
         # Embedding provider/model overrides
         emb_provider_key = "FOAMAGENT_EMBEDDING_PROVIDER"

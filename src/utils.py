@@ -481,10 +481,17 @@ class LLMService:
                 max_tokens=8192
             )
         elif self.model_provider.lower() == "anthropic":
-            self.llm = ChatAnthropic(
-                model=self.model_version, 
-                temperature=self.temperature
-            )
+            anthropic_kwargs = {
+                "model": self.model_version,
+                "temperature": self.temperature,
+            }
+            anthro_url = getattr(self._config, "anthropic_base_url", "")
+            if anthro_url:
+                anthropic_kwargs["anthropic_api_url"] = anthro_url
+            max_tok = getattr(self._config, "max_tokens", 0)
+            if max_tok > 0:
+                anthropic_kwargs["max_tokens"] = max_tok
+            self.llm = ChatAnthropic(**anthropic_kwargs)
         elif self.model_provider.lower() == "openai":
             # Usage-based API access (requires OPENAI_API_KEY or equivalent OpenAI SDK config)
             self.llm = init_chat_model(
@@ -595,8 +602,47 @@ class LLMService:
         time.sleep(sleep_time)
         
         return retry_count
-    
-    def invoke(self, 
+
+    @staticmethod
+    def _extract_text(response) -> str:
+        """Extract text from an LLM response, handling content-block format.
+
+        Anthropic-compatible APIs may return content as a list of typed blocks:
+            [{"type": "text", "text": "Hello"}, {"type": "thinking", "thinking": "..."}]
+        This method extracts only "text" blocks.
+        """
+        raw = getattr(response, "content", "")
+        if isinstance(raw, list):
+            texts = []
+            for block in raw:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_val = block.get("text", "")
+                    if text_val:
+                        texts.append(text_val)
+            return "\n".join(texts).strip() if texts else ""
+        return str(raw)
+
+    def _structured_output_fallback(self, messages: list, pydantic_obj: Type[BaseModel]):
+        """Fallback: prompt the model to output raw JSON and parse it."""
+        import json as _json
+        schema = pydantic_obj.model_json_schema()
+        instruction = (
+            f"Return ONLY valid JSON (no markdown, no extra text) matching this schema:\n"
+            f"{_json.dumps(schema, ensure_ascii=False)}"
+        )
+        json_messages = [{"role": "system", "content": instruction}] + messages
+        raw_response = self.llm.invoke(json_messages)
+        text = self._extract_text(raw_response)
+        # Strip markdown fences if present
+        t = text.strip()
+        if t.startswith("```"):
+            lines = t.split("\n")
+            t = "\n".join(lines[1:]) if len(lines) > 1 else t
+            if t.endswith("```"):
+                t = "\n".join(t.split("\n")[:-1])
+        return pydantic_obj.model_validate_json(t)
+
+    def invoke(self,
               user_prompt: str, 
               system_prompt: Optional[str] = None, 
               pydantic_obj: Optional[Type[BaseModel]] = None,
@@ -629,18 +675,18 @@ class LLMService:
         while True:
             try:
                 if pydantic_obj:
-                    structured_llm = self.llm.with_structured_output(pydantic_obj)
-                    response = structured_llm.invoke(messages)
-                else:
-                    if self.model_version.startswith("deepseek"):
-                        structured_llm = self.llm.with_structured_output(ResponseWithThinkPydantic)
+                    try:
+                        structured_llm = self.llm.with_structured_output(pydantic_obj)
                         response = structured_llm.invoke(messages)
-
-                        # Extract the resposne without the think
-                        response = response.response
-                    else:
-                        response = self.llm.invoke(messages)
-                        response = response.content
+                    except Exception as e:
+                        if "tool_choice" in str(e).lower():
+                            print("[LLM] tool_choice unsupported, falling back to JSON prompt")
+                            response = self._structured_output_fallback(messages, pydantic_obj)
+                        else:
+                            raise
+                else:
+                    response = self.llm.invoke(messages)
+                    response = self._extract_text(response)
 
                 # Calculate completion tokens
                 response_content = str(response)
