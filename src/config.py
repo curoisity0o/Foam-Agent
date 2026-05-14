@@ -29,7 +29,7 @@ class Config:
     # - "ollama": local models
     # - "bedrock": AWS Bedrock
     # - "anthropic": Anthropic Claude API (requires ANTHROPIC_API_KEY)
-    model_provider: str = "openai-codex"  # [openai, openai-codex, ollama, bedrock, anthropic]
+    model_provider: str = "openai-codex"  # [openai, openai-codex, ollama, bedrock, anthropic, deepseek]
     # model_version examples:
     # - OpenAI: "gpt-5-mini"
     # - OpenAI Codex subscription: "gpt-5.3-codex" (or whichever Codex model you have access to)
@@ -38,11 +38,8 @@ class Config:
     # - Anthropic: claude-3-5-sonnet-latest
     model_version: str = "gpt-5.3-codex"
     temperature: float = 1
-    # Optional: redirect Anthropic-compatible traffic to a different base URL
-    # (e.g. https://api.deepseek.com/anthropic). Empty = use default.
-    anthropic_base_url: str = ""
-    # Optional: override max output tokens (0 = use provider default).
-    max_tokens: int = 0
+    # Optional: override max output tokens (-1 = use provider default).
+    max_tokens: int = -1
 
     # Embedding Configuration
     embedding_provider: str = "huggingface"  # [openai, huggingface, ollama]
@@ -68,7 +65,7 @@ class Config:
 
         provider_env = _env_nonempty(provider_key)
         if provider_env is not None:
-            allowed = {"openai", "openai-codex", "ollama", "bedrock", "anthropic"}
+            allowed = {"openai", "openai-codex", "ollama", "bedrock", "anthropic", "deepseek"}
             if provider_env in allowed:
                 self.model_provider = provider_env
                 print(f"<config>model_provider={self.model_provider} (env:{provider_key})</config>")
@@ -86,15 +83,6 @@ class Config:
         else:
             print(f"<config>model_version={self.model_version} (default)</config>")
 
-        # Anthropic-compatible base URL override
-        anthropic_url_key = "FOAMAGENT_ANTHROPIC_BASE_URL"
-        anthropic_url_env = _env_nonempty(anthropic_url_key)
-        if anthropic_url_env is not None:
-            self.anthropic_base_url = anthropic_url_env
-            print(f"<config>anthropic_base_url={self.anthropic_base_url} (env:{anthropic_url_key})</config>")
-        else:
-            print(f"<config>anthropic_base_url={self.anthropic_base_url} (default)</config>")
-
         # Max tokens override
         max_tok_key = "FOAMAGENT_MAX_TOKENS"
         max_tok_env = _env_nonempty(max_tok_key)
@@ -104,8 +92,6 @@ class Config:
                 print(f"<config>max_tokens={self.max_tokens} (env:{max_tok_key})</config>")
             except ValueError:
                 print(f"<config>max_tokens={self.max_tokens} (default; invalid env:{max_tok_key}={max_tok_env!r})</config>")
-        else:
-            print(f"<config>max_tokens={self.max_tokens} (default)</config>")
 
         # Embedding provider/model overrides
         emb_provider_key = "FOAMAGENT_EMBEDDING_PROVIDER"

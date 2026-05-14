@@ -481,17 +481,10 @@ class LLMService:
                 max_tokens=8192
             )
         elif self.model_provider.lower() == "anthropic":
-            anthropic_kwargs = {
-                "model": self.model_version,
-                "temperature": self.temperature,
-            }
-            anthro_url = getattr(self._config, "anthropic_base_url", "")
-            if anthro_url:
-                anthropic_kwargs["anthropic_api_url"] = anthro_url
-            max_tok = getattr(self._config, "max_tokens", 0)
-            if max_tok > 0:
-                anthropic_kwargs["max_tokens"] = max_tok
-            self.llm = ChatAnthropic(**anthropic_kwargs)
+            self.llm = ChatAnthropic(
+                model=self.model_version,
+                temperature=self.temperature
+            )
         elif self.model_provider.lower() == "openai":
             # Usage-based API access (requires OPENAI_API_KEY or equivalent OpenAI SDK config)
             self.llm = init_chat_model(
@@ -540,6 +533,22 @@ class LLMService:
                 num_ctx=131072,
                 base_url="http://localhost:11434"
             )
+        elif self.model_provider.lower() == "deepseek":
+            from langchain_openai import ChatOpenAI
+            deepseek_kwargs = {
+                "model": self.model_version,
+                "temperature": self.temperature,
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key": os.getenv("DEEPSEEK_API_KEY"),
+            }
+            max_tok = getattr(self._config, "max_tokens", -1)
+            if max_tok > 0:
+                deepseek_kwargs["max_tokens"] = max_tok
+            reasoning = os.getenv("FOAMAGENT_REASONING_EFFORT", "max")
+            if reasoning not in ("high", "max"):
+                reasoning = "max"
+            deepseek_kwargs["reasoning_effort"] = reasoning
+            self.llm = ChatOpenAI(**deepseek_kwargs)
         else:
             raise ValueError(f"{self.model_provider} is not a supported model_provider")
     
@@ -675,18 +684,27 @@ class LLMService:
         while True:
             try:
                 if pydantic_obj:
-                    try:
+                    if self.model_provider.lower() == "deepseek":
+                        try:
+                            structured_llm = self.llm.with_structured_output(pydantic_obj)
+                            response = structured_llm.invoke(messages)
+                        except Exception as e:
+                            if "tool_choice" in str(e).lower():
+                                print("[LLM] tool_choice unsupported, falling back to JSON prompt")
+                                response = self._structured_output_fallback(messages, pydantic_obj)
+                            else:
+                                raise
+                    else:
                         structured_llm = self.llm.with_structured_output(pydantic_obj)
                         response = structured_llm.invoke(messages)
-                    except Exception as e:
-                        if "tool_choice" in str(e).lower():
-                            print("[LLM] tool_choice unsupported, falling back to JSON prompt")
-                            response = self._structured_output_fallback(messages, pydantic_obj)
-                        else:
-                            raise
                 else:
-                    response = self.llm.invoke(messages)
-                    response = self._extract_text(response)
+                    if self.model_version.startswith("deepseek"):
+                        structured_llm = self.llm.with_structured_output(ResponseWithThinkPydantic)
+                        response = structured_llm.invoke(messages)
+                        response = response.response
+                    else:
+                        response = self.llm.invoke(messages)
+                        response = response.content
 
                 # Calculate completion tokens
                 response_content = str(response)
