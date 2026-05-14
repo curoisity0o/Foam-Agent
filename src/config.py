@@ -38,8 +38,6 @@ class Config:
     # - Anthropic: claude-3-5-sonnet-latest
     model_version: str = "gpt-5.3-codex"
     temperature: float = 1
-    # Optional: override max output tokens (-1 = use provider default).
-    max_tokens: int = -1
 
     # Embedding Configuration
     embedding_provider: str = "huggingface"  # [openai, huggingface, ollama]
@@ -82,16 +80,6 @@ class Config:
             print(f"<config>model_version={self.model_version} (env:{version_key})</config>")
         else:
             print(f"<config>model_version={self.model_version} (default)</config>")
-
-        # Max tokens override
-        max_tok_key = "FOAMAGENT_MAX_TOKENS"
-        max_tok_env = _env_nonempty(max_tok_key)
-        if max_tok_env is not None:
-            try:
-                self.max_tokens = int(max_tok_env)
-                print(f"<config>max_tokens={self.max_tokens} (env:{max_tok_key})</config>")
-            except ValueError:
-                print(f"<config>max_tokens={self.max_tokens} (default; invalid env:{max_tok_key}={max_tok_env!r})</config>")
 
         # Embedding provider/model overrides
         emb_provider_key = "FOAMAGENT_EMBEDDING_PROVIDER"

@@ -535,20 +535,17 @@ class LLMService:
             )
         elif self.model_provider.lower() == "deepseek":
             from langchain_openai import ChatOpenAI
-            deepseek_kwargs = {
-                "model": self.model_version,
-                "temperature": self.temperature,
-                "base_url": "https://api.deepseek.com/v1",
-                "api_key": os.getenv("DEEPSEEK_API_KEY"),
-            }
-            max_tok = getattr(self._config, "max_tokens", -1)
-            if max_tok > 0:
-                deepseek_kwargs["max_tokens"] = max_tok
             reasoning = os.getenv("FOAMAGENT_REASONING_EFFORT", "max")
             if reasoning not in ("high", "max"):
                 reasoning = "max"
-            deepseek_kwargs["reasoning_effort"] = reasoning
-            self.llm = ChatOpenAI(**deepseek_kwargs)
+            self.llm = ChatOpenAI(
+                model=self.model_version,
+                temperature=self.temperature,
+                base_url="https://api.deepseek.com/v1",
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                reasoning_effort=reasoning,
+                model_kwargs={"thinking": {"type": "enabled"}},
+            )
         else:
             raise ValueError(f"{self.model_provider} is not a supported model_provider")
     
