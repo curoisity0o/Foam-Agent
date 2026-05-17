@@ -105,7 +105,7 @@ class FoamPydantic(BaseModel):
 class ResponseWithThinkPydantic(BaseModel):
     think: str = Field(description="Thought process of the LLM")
     response: str = Field(description="Response of the LLM")
-    
+
 class _CodexResponsesWrapper:
     """Wrapper for an OpenAI Responses-compatible endpoint.
 
@@ -536,15 +536,16 @@ class LLMService:
         elif self.model_provider.lower() == "deepseek":
             from langchain_openai import ChatOpenAI
             reasoning = os.getenv("FOAMAGENT_REASONING_EFFORT", "max")
-            if reasoning not in ("high", "max"):
+            if reasoning not in ("low", "medium", "high", "max"):
                 reasoning = "max"
+            # Note: temperature is ignored by DeepSeek in thinking mode.
             self.llm = ChatOpenAI(
                 model=self.model_version,
                 temperature=self.temperature,
                 base_url="https://api.deepseek.com/v1",
                 api_key=os.getenv("DEEPSEEK_API_KEY"),
                 reasoning_effort=reasoning,
-                model_kwargs={"thinking": {"type": "enabled"}},
+                extra_body={"thinking": {"type": "enabled"}},
             )
         else:
             raise ValueError(f"{self.model_provider} is not a supported model_provider")
@@ -609,45 +610,6 @@ class LLMService:
         
         return retry_count
 
-    @staticmethod
-    def _extract_text(response) -> str:
-        """Extract text from an LLM response, handling content-block format.
-
-        Anthropic-compatible APIs may return content as a list of typed blocks:
-            [{"type": "text", "text": "Hello"}, {"type": "thinking", "thinking": "..."}]
-        This method extracts only "text" blocks.
-        """
-        raw = getattr(response, "content", "")
-        if isinstance(raw, list):
-            texts = []
-            for block in raw:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_val = block.get("text", "")
-                    if text_val:
-                        texts.append(text_val)
-            return "\n".join(texts).strip() if texts else ""
-        return str(raw)
-
-    def _structured_output_fallback(self, messages: list, pydantic_obj: Type[BaseModel]):
-        """Fallback: prompt the model to output raw JSON and parse it."""
-        import json as _json
-        schema = pydantic_obj.model_json_schema()
-        instruction = (
-            f"Return ONLY valid JSON (no markdown, no extra text) matching this schema:\n"
-            f"{_json.dumps(schema, ensure_ascii=False)}"
-        )
-        json_messages = [{"role": "system", "content": instruction}] + messages
-        raw_response = self.llm.invoke(json_messages)
-        text = self._extract_text(raw_response)
-        # Strip markdown fences if present
-        t = text.strip()
-        if t.startswith("```"):
-            lines = t.split("\n")
-            t = "\n".join(lines[1:]) if len(lines) > 1 else t
-            if t.endswith("```"):
-                t = "\n".join(t.split("\n")[:-1])
-        return pydantic_obj.model_validate_json(t)
-
     def invoke(self,
               user_prompt: str, 
               system_prompt: Optional[str] = None, 
@@ -682,23 +644,32 @@ class LLMService:
             try:
                 if pydantic_obj:
                     if self.model_provider.lower() == "deepseek":
-                        try:
-                            structured_llm = self.llm.with_structured_output(pydantic_obj)
-                            response = structured_llm.invoke(messages)
-                        except Exception as e:
-                            if "tool_choice" in str(e).lower():
-                                print("[LLM] tool_choice unsupported, falling back to JSON prompt")
-                                response = self._structured_output_fallback(messages, pydantic_obj)
-                            else:
-                                raise
+                        # DeepSeek thinking mode does not support response_format,
+                        # so with_structured_output fails. Use JSON prompt fallback.
+                        schema = pydantic_obj.model_json_schema()
+                        json_instruction = (
+                            "Return ONLY valid JSON (no markdown, no extra text) matching this schema:\n"
+                            + str(schema)
+                        )
+                        json_messages = list(messages)
+                        json_messages.append({"role": "user", "content": json_instruction})
+                        raw_response = self.llm.invoke(json_messages)
+                        raw_text = raw_response.content
+                        # Strip markdown fences if present
+                        t = raw_text.strip()
+                        if t.startswith("```"):
+                            t = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", t)
+                            t = re.sub(r"\n?```\s*$", "", t).strip()
+                        response = pydantic_obj.model_validate_json(t)
                     else:
                         structured_llm = self.llm.with_structured_output(pydantic_obj)
                         response = structured_llm.invoke(messages)
                 else:
-                    if self.model_version.startswith("deepseek"):
-                        structured_llm = self.llm.with_structured_output(ResponseWithThinkPydantic)
-                        response = structured_llm.invoke(messages)
-                        response = response.response
+                    if self.model_provider.lower() == "deepseek":
+                        # DeepSeek thinking mode does not support response_format.
+                        # reasoning_content is returned separately; .content has the final answer.
+                        response = self.llm.invoke(messages)
+                        response = response.content
                     else:
                         response = self.llm.invoke(messages)
                         response = response.content
