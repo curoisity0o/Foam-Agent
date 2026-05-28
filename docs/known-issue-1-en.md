@@ -38,7 +38,7 @@ This issue is **non-deterministic** — whether `*Final` entries are omitted dep
 | pisoFoam cavity (RAS) | none | 1 (other error) |
 | pimpleFoam planarCouette | none | 1 (other error) |
 
-Test scripts: `tests/test_pisoFoam_cavity_multirun.py`, `tests/test_pimpleFoam_couette_multirun.py`
+Test scripts: refer to `tests/test_lid_driven_cavity_services.py` for the existing test framework
 
 ## Root Cause
 
